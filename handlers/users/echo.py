@@ -1,7 +1,9 @@
+import logging
+
 from aiogram import types
-from googletrans import Translator
 from loader import db, dp
 from utils.misc import subscription
+from utils.misc.translation import translate_text
 
 
 @dp.message_handler(state=None)
@@ -25,10 +27,10 @@ async def bot_echo(message: types.Message):
             for i in langs:
                 from_lang += f"{i[0]}"
                 to_lang += f"{i[1]}"
-            tar = Translator()
-            a = tar.translate(f'{message.text}', src=f'{from_lang}', dest=f'{to_lang}').text
+            a = await translate_text(message.text, from_lang, to_lang)
             await message.answer(text=a)
-        except:
+        except Exception:
+            logging.exception('Translation request failed')
             await message.answer('Kechirasiz faqat 500 tagacha bo`lgan so`zlarni qabul qilamiz\n\n'
                                  'Iltomos 500 tadan ortig`ini alohida kiriting\n\n'
                                  'Agar sizda boshqa muammo yuzaga kelgan bo`lsa iltimos /start buyrug`ini yuboring')
