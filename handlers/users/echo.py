@@ -1,59 +1,62 @@
+import html
 import logging
 
 from aiogram import types
+
 from loader import db, dp
 from utils.misc import subscription
-from utils.misc.translation import translate_text
+from utils.misc.translation import TranslationError, translate_text
+
+
+async def _is_subscribed(user_id: int) -> bool:
+    for channel in await db.select_chanel():
+        try:
+            if not await subscription.check(user_id=user_id, channel=channel['chanelll']):
+                return False
+        except Exception:
+            logging.exception("Subscription check failed for channel %s", channel['chanelll'])
+            return False
+    return True
+
+
+async def _answer_translated(message: types.Message, text: str) -> None:
+    # Telegram bir xabarda 4096 belgidan ortig'ini yubormaydi.
+    for offset in range(0, len(text), 4096):
+        await message.answer(html.escape(text[offset:offset + 4096]))
 
 
 @dp.message_handler(state=None)
 async def bot_echo(message: types.Message):
-    status = True
-    all = await db.select_chanel()
-    chanels = []
-    url = []
-    for i in all:
-        chanels.append(i['chanelll'])
-        url.append(i['url'])
-
-    for channel in chanels:
-        status *= await subscription.check(user_id=message.from_user.id,
-                                           channel=f'{channel}')
-    if status:
+    await db.add_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+        type=1,
+    )
+    channels = await db.select_chanel()
+    if await _is_subscribed(message.from_user.id):
         try:
-            langs = await db.get_from(tg_id=message.from_user.id)
-            from_lang = ''
-            to_lang = ''
-            for i in langs:
-                from_lang += f"{i[0]}"
-                to_lang += f"{i[1]}"
-            a = await translate_text(message.text, from_lang, to_lang)
-            await message.answer(text=a)
-        except Exception:
+            lang = await db.select_user(telegram_id=message.from_user.id)
+            translated = await translate_text(message.text, lang['from_lang'] or 'uz', lang['to_lang'] or 'ru')
+            await _answer_translated(message, translated)
+        except ValueError as error:
+            await message.answer(str(error))
+        except TranslationError:
             logging.exception('Translation request failed')
-            await message.answer('Kechirasiz faqat 500 tagacha bo`lgan so`zlarni qabul qilamiz\n\n'
-                                 'Iltomos 500 tadan ortig`ini alohida kiriting\n\n'
-                                 'Agar sizda boshqa muammo yuzaga kelgan bo`lsa iltimos /start buyrug`ini yuboring')
+            await message.answer('Tarjima xizmati vaqtincha band. Bir ozdan keyin qayta urinib ko`ring.')
+        except Exception:
+            logging.exception('Unexpected translation request failure')
+            await message.answer('Xatolik yuz berdi. Iltimos, /start buyrug`ini yuborib qayta urinib ko`ring.')
+        return
 
-    else:
-        button = types.InlineKeyboardMarkup(row_width=1, )
-        counter = 0
-        for i in url:
-            counter += 1
-            button.add(types.InlineKeyboardButton(f"{counter}-канал", url=f'https://t.me/{i}'))
-        button.add(types.InlineKeyboardButton(text="Tekshirish", callback_data="check_subs"))
-        await message.answer(f"👋 Assalomu alaykum {message.from_user.first_name}\n\n"
-                             f"Botdan foydalanish uchun kanalga obuna bo'lishingiz kerak. Obuna bo'lgach pastdagi Tekshirish tugmasini bosing!",
-                             reply_markup=button,
-                             disable_web_page_preview=True)
-    try:
-        await db.add_user(
-            telegram_id=message.from_user.id,
-            username=message.from_user.username,
-            full_name=message.from_user.full_name,
-            type=1
-        )
-        await db.update_users_from_lang(from_lang='uz', to_lang='ru', tg_id=message.from_user.id)
-
-    except Exception as err:
-        pass
+    button = types.InlineKeyboardMarkup(row_width=1)
+    for counter, channel in enumerate(channels, start=1):
+        button.add(types.InlineKeyboardButton(f"{counter}-kanal", url=f"https://t.me/{channel['url']}"))
+    button.add(types.InlineKeyboardButton(text="Tekshirish", callback_data="check_subs"))
+    await message.answer(
+        f"Assalomu alaykum {message.from_user.first_name}\n\n"
+        "Botdan foydalanish uchun kanalga obuna bo'lishingiz kerak. "
+        "Obuna bo'lgach pastdagi Tekshirish tugmasini bosing!",
+        reply_markup=button,
+        disable_web_page_preview=True,
+    )

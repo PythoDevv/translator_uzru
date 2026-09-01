@@ -17,7 +17,10 @@ class Database:
             user=config.DB_USER,
             password=config.DB_PASS,
             host=config.DB_HOST,
-            database=config.DB_NAME
+            database=config.DB_NAME,
+            min_size=1,
+            max_size=10,
+            command_timeout=30,
         )
 
     async def execute(self, command, *args,
@@ -46,12 +49,38 @@ class Database:
         full_name VARCHAR(255) NOT NULL,
         username varchar(255) NULL,
         telegram_id BIGINT NOT NULL UNIQUE,
-        from_lang varchar(5) NULL,
-        to_lang varchar(5) NULL,
-        is_active INT NOT NULL  
+        from_lang varchar(5) NOT NULL DEFAULT 'uz',
+        to_lang varchar(5) NOT NULL DEFAULT 'ru',
+        is_active INT NOT NULL DEFAULT 1,
+        last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         """
         await self.execute(sql, execute=True)
+        # Eski jadval bilan ham mos ishlash uchun xavfsiz migratsiya.
+        await self.execute("ALTER TABLE Users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ", execute=True)
+        await self.execute("ALTER TABLE Users ALTER COLUMN from_lang SET DEFAULT 'uz'", execute=True)
+        await self.execute("ALTER TABLE Users ALTER COLUMN to_lang SET DEFAULT 'ru'", execute=True)
+        await self.execute("UPDATE Users SET from_lang='uz' WHERE from_lang IS NULL", execute=True)
+        await self.execute("UPDATE Users SET to_lang='ru' WHERE to_lang IS NULL", execute=True)
+        await self.execute("UPDATE Users SET last_seen=NOW() WHERE last_seen IS NULL", execute=True)
+
+    async def create_table_admins(self):
+        sql = """
+        CREATE TABLE IF NOT EXISTS Admins (
+            telegram_id BIGINT PRIMARY KEY,
+            added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+        await self.execute(sql, execute=True)
+
+    async def seed_admins(self, admin_ids):
+        # Faqat birinchi ishga tushishda .env dagi adminlar ko'chiriladi.
+        # Keyingi restartlarda DB holati (jumladan admin o'chirilishi) saqlanadi.
+        exists = await self.execute("SELECT EXISTS(SELECT 1 FROM Admins)", fetchval=True)
+        if exists:
+            return
+        for admin_id in admin_ids:
+            await self.add_admin(int(admin_id))
 
     async def create_table_chanel(self):
         sql = """
@@ -71,8 +100,18 @@ class Database:
         ])
         return sql, tuple(parameters.values())
 
-    async def add_user(self, full_name, telegram_id, username, type):
-        sql = "INSERT INTO users (full_name, telegram_id, username, is_active) VALUES($1, $2, $3, $4) returning *"
+    async def add_user(self, full_name, telegram_id, username, type=1):
+        """Foydalanuvchini yangilaydi, til tanlovini esa o'zgartirmaydi."""
+        sql = """
+        INSERT INTO users (full_name, telegram_id, username, is_active, last_seen)
+        VALUES($1, $2, $3, $4, NOW())
+        ON CONFLICT (telegram_id) DO UPDATE SET
+            full_name=EXCLUDED.full_name,
+            username=EXCLUDED.username,
+            is_active=EXCLUDED.is_active,
+            last_seen=NOW()
+        RETURNING *
+        """
         return await self.execute(sql, full_name, telegram_id, username, type, fetchrow=True)
 
     async def add_json_file_user(self, full_name, username, phone, telegram_id, score):
@@ -102,6 +141,22 @@ class Database:
     async def count_block_users(self):
         sql = "SELECT COUNT(is_active) FROM Users WHERE is_active=0"
         return await self.execute(sql, fetchval=True)
+
+    async def add_admin(self, telegram_id: int):
+        sql = "INSERT INTO Admins (telegram_id) VALUES($1) ON CONFLICT (telegram_id) DO NOTHING RETURNING telegram_id"
+        return await self.execute(sql, telegram_id, fetchrow=True)
+
+    async def remove_admin(self, telegram_id: int):
+        sql = "DELETE FROM Admins WHERE telegram_id=$1 RETURNING telegram_id"
+        return await self.execute(sql, telegram_id, fetchrow=True)
+
+    async def is_admin(self, telegram_id: int) -> bool:
+        sql = "SELECT EXISTS(SELECT 1 FROM Admins WHERE telegram_id=$1)"
+        return bool(await self.execute(sql, telegram_id, fetchval=True))
+
+    async def select_admins(self):
+        sql = "SELECT telegram_id FROM Admins ORDER BY added_at, telegram_id"
+        return await self.execute(sql, fetch=True)
 
     async def update_users_from_lang(self, from_lang, to_lang, tg_id):
         sql = "UPDATE Users SET from_lang=$1, to_lang=$2 where telegram_id=$3"

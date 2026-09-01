@@ -2,12 +2,12 @@ import logging
 
 from aiogram import Dispatcher
 
-from data.config import ADMINS
-
-
 async def on_startup_notify(dp: Dispatcher):
-    for admin in ADMINS:
+    # Import shu yerda qilinadi: loader -> utils import siklini oldini oladi.
+    from loader import db
+
+    for admin in await db.select_admins():
         try:
-            pass
+            await dp.bot.send_message(admin['telegram_id'], "Bot ishga tushdi.")
         except Exception as err:
-            logging.exception(err)
+            logging.warning("Startup notification could not be sent to %s: %s", admin['telegram_id'], err)
