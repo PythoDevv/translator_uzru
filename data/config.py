@@ -9,9 +9,19 @@ BOT_TOKEN = env.str("BOT_TOKEN")  # Bot toekn
 ADMINS = [int(admin) for admin in env.list(
     "ADMINS", default=["1033990411", "935795577", "1604052132"]
 )]
-# Agar kalit berilsa rasmiy Google Cloud Translation API ishlatiladi.
-# Kalitsiz holatda bot Google endpointidan foydalanadi.
-GOOGLE_TRANSLATE_API_KEY = env.str("GOOGLE_TRANSLATE_API_KEY", default="")
+# Tarjimalar Gemini API orqali bajariladi. Modelni .env orqali almashtirish
+# mumkin, ammo odatda standart qiymatni o'zgartirish shart emas.
+GEMINI_API_KEY = env.str("GEMINI_API_KEY", default="")
+# Eski .env dagi nom ham vaqtincha qo'llab-quvvatlanadi. Yangi loyihalarda
+# GEMINI_FALLBACK_API_KEY nomidan foydalanish kerak.
+GEMINI_FALLBACK_API_KEY = env.str(
+    "GEMINI_FALLBACK_API_KEY",
+    default=env.str("Ehtiyotshart_api_key", default=""),
+)
+GEMINI_API_KEYS = tuple(dict.fromkeys(
+    key for key in (GEMINI_API_KEY, GEMINI_FALLBACK_API_KEY) if key
+))
+GEMINI_MODEL = env.str("GEMINI_MODEL", default="gemini-3.1-flash-lite")
 IP = env.str("ip")  # Xosting ip manzili
 
 DB_USER = env.str("DB_USER")
